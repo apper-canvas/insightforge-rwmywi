@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Upload, FileText, X, Check, AlertCircle, BarChart, PieChart, LineChart, Filter } from 'lucide-react';
+import Papa from 'papaparse';
 
 const MainFeature = () => {
   const [isDragging, setIsDragging] = useState(false);
@@ -51,50 +52,33 @@ const MainFeature = () => {
     
     setFile(selectedFile);
     
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const csvData = e.target.result;
-        parseCSV(csvData);
-      } catch (err) {
-        setError('Failed to read the file. Please try again.');
-      }
-    };
-    reader.readAsText(selectedFile);
-  };
-
-  const parseCSV = (csvData) => {
-    try {
-      // Simple CSV parsing (in a real app, use a library like PapaParse)
-      const rows = csvData.split('\n');
-      const headers = rows[0].split(',').map(header => header.trim());
-      
-      const parsedData = [];
-      for (let i = 1; i < Math.min(rows.length, 6); i++) {
-        if (rows[i].trim() === '') continue;
+    // Use PapaParse to parse the CSV file correctly
+    Papa.parse(selectedFile, {
+      header: true,
+      dynamicTyping: true,
+      skipEmptyLines: true,
+      complete: (results) => {
+        if (results.errors && results.errors.length > 0) {
+          setError(`Failed to parse CSV: ${results.errors[0].message}`);
+          return;
+        }
         
-        const values = rows[i].split(',').map(value => value.trim());
-        const rowData = {};
+        const headers = results.meta.fields || [];
+        const parsedData = results.data.slice(0, 5); // Get first 5 rows for preview
         
-        headers.forEach((header, index) => {
-          rowData[header] = values[index] || '';
+        setFileData({
+          headers,
+          rows: parsedData,
+          totalRows: results.data.length
         });
         
-        parsedData.push(rowData);
+        // Start analysis
+        analyzeData(headers, results.data);
+      },
+      error: (error) => {
+        setError('Failed to parse CSV. Please check the file format.');
       }
-      
-      setFileData({
-        headers,
-        rows: parsedData,
-        totalRows: rows.length - 1
-      });
-      
-      // Start analysis
-      analyzeData(headers, parsedData);
-      
-    } catch (err) {
-      setError('Failed to parse CSV. Please check the file format.');
-    }
+    });
   };
 
   const analyzeData = (headers, rows) => {
@@ -106,16 +90,26 @@ const MainFeature = () => {
       const columnTypes = {};
       
       headers.forEach(header => {
-        // Check if column contains numeric values
-        const isNumeric = rows.every(row => {
-          const value = row[header];
-          return value === '' || !isNaN(value);
-        });
+        // Check data samples for type inference
+        const sampleValues = rows.slice(0, Math.min(rows.length, 20))
+          .map(row => row[header])
+          .filter(value => value !== null && value !== undefined && value !== "");
         
-        // Check if column contains date values (simple check)
-        const mightBeDate = rows.every(row => {
-          const value = row[header];
-          return value === '' || !isNaN(Date.parse(value));
+        if (sampleValues.length === 0) {
+          columnTypes[header] = 'unknown';
+          return;
+        }
+        
+        // Check if column contains numeric values
+        const isNumeric = sampleValues.every(value => 
+          typeof value === 'number' || (typeof value === 'string' && !isNaN(value))
+        );
+        
+        // Check if column contains date values
+        const mightBeDate = sampleValues.every(value => {
+          if (typeof value === 'number') return false;
+          const parsed = new Date(value);
+          return !isNaN(parsed.getTime());
         });
         
         if (isNumeric) {
@@ -331,7 +325,7 @@ const MainFeature = () => {
                         <tr key={rowIndex} className="border-b border-surface-100 dark:border-surface-800 last:border-0">
                           {fileData.headers.map((header, colIndex) => (
                             <td key={colIndex} className="px-4 py-2 text-surface-700 dark:text-surface-300">
-                              {row[header]}
+                              {row[header]?.toString() || ''}
                             </td>
                           ))}
                         </tr>
